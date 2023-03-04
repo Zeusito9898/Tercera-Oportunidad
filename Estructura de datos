@@ -1,0 +1,454 @@
+from collections import namedtuple
+import datetime
+import pandas as pd
+import random
+import sys
+import sqlite3
+from sqlite3 import Error
+
+evento = {}
+open_first = False
+try:
+    d = open("BD_RESERVACIONES.db",'r')
+    d.close()
+except FileNotFoundError:
+    print("\n *** No se encontró ningun respaldo de Base de datos. Se tomará como primer inicio del programa. ***\n")
+    input("\nEnter para continuar\n")
+    open_first = True
+finally:
+    try:
+        with sqlite3.connect("BD_RESERVACIONES.db") as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE IF NOT EXISTS SALA (clave_sala INTEGER PRIMARY KEY, nombre TEXT NOT NULL, cupo INTEGER NOT NULL);")
+            cursor.execute("CREATE TABLE IF NOT EXISTS CLIENTE (clave_cliente INTEGER PRIMARY KEY, nombre_cliente TEXT NOT NULL);")
+            cursor.execute("CREATE TABLE IF NOT EXISTS TURNO (descripcion TEXT PRIMARY KEY, clave_turno TEXT NOT NULL);")
+            cursor.execute("""CREATE TABLE IF NOT EXISTS RESERVACION (
+                            folio INTEGER,
+                            fecha_reserva TEXT NOT NULL,
+                            nombre_evento TEXT NOT NULL,
+                            cliente INTEGER NOT NULL,
+                            sala INTEGER NOT NULL,
+                            turno TEXT NOT NULL,
+                            CONSTRAINT clave_pk PRIMARY KEY(folio,sala,turno),
+                            FOREIGN KEY(sala) REFERENCES SALA(clave_sala),
+                            FOREIGN KEY(turno) REFERENCES TURNO(descripcion),
+                            FOREIGN KEY(cliente) REFERENCES CLIENTE(clave_cliente));""")
+            cursor.execute("SELECT * FROM TURNO;")
+            turnos = cursor.fetchall() 
+            if not turnos:
+                cursor.execute(f"INSERT INTO TURNO VALUES('Matutino','M'),('Vespertino','V'),('Nocturno','N');")
+    except Error as e:
+        print(e)
+    else:
+        if open_first:
+            print("¡Base de Datos creada con Exito!\n")
+        else:
+            print("Se encontró un respaldo, cargando...\n")
+
+while True:
+    print("- " * 40)
+    print(" Renta de Espacios de Coworking ".center(80, " "))
+    print("Menú principal\n".center(80, " "))
+    print("1. Reservaciones.")
+    print("2. Reportes.")
+    print("3. Registrar una Sala.")
+    print("4. Registrar un Cliente.")
+    print("\n0. Salir\n")
+    print("- " * 40)
+    menu_op = int(input("Ingresa el número con la opción: "))
+
+    if menu_op == 1:
+        while True:
+            print(f'\n{" Reservaciones ".center(80, "_")}\n')
+            print("1. Registrar nueva reservación.")
+            print("2. Modificar descripción de una reservación.")
+            print("3. Consultar Disponibilidad de salas para una fecha")
+            print("4. Eliminar una reservación")
+            print("\n0. Volver al Menú Principal\n")
+            print("- " * 40)
+            submenu_op = int(input("Ingresa el número con la opción: "))
+
+            if submenu_op == 1:
+                print("- " * 40)
+                print(f'\n{"---- Registrar nueva reservación ----".center(80, " ")}\n')
+            
+                print("***** Para realizar la reservacion se debe autenticar el cliente ****")
+                print("\n0. Regresar\n")
+                try:
+                    while True:
+                        buscar_cliente = int(input("Ingrese la Clave del Cliente: "))
+                        if buscar_cliente == 0:
+                            break
+                        with sqlite3.connect("BD_RESERVACIONES.db") as conn:
+                            cursor = conn.cursor()
+                            evento['cliente'] = buscar_cliente
+                            cursor.execute(f"SELECT clave_cliente, nombre_cliente FROM CLIENTE WHERE clave_cliente = :cliente", evento)
+                            cliente_resultado = cursor.fetchall()
+                            
+                            if cliente_resultado:
+                                fecha = input("Fecha a reservar (DD/MM/YYYY): ")
+                                fecha_reserva = datetime.datetime.strptime(fecha, "%d/%m/%Y").date()
+                                fecha_limite_reserva = fecha_reserva - datetime.timedelta(days=+2)
+                                
+                                if datetime.date.today() <= fecha_limite_reserva:
+                                    print(f'\n{"_" * 41}')
+                                    for clave, nombre in cliente_resultado:
+                                        print(f"Clave: {clave}")
+                                        print(f"Nombre del Cliente: {nombre}")
+                                    print(f"Fecha a reservar: {fecha_reserva}\n")
+                                    
+                                    cursor.execute(f"""SELECT * FROM SALA;""")
+                                    salas = cursor.fetchall()                                    
+                                    
+                                    if not salas:
+                                        print(" **** No existen salas registradas, favor de registrarlas primero ****")
+                                        break
+                                    else:
+                                        evento['fecha'] = fecha_reserva.strftime('%Y-%m-%d')
+                                        cursor.execute(f"""SELECT DISTINCT S.clave_sala, S.nombre, S.cupo
+                                                       FROM SALA as S, TURNO AS T
+                                                       WHERE NOT EXISTS (SELECT * FROM RESERVACION AS R WHERE S.clave_sala = R.sala
+                                                       AND T.descripcion = R.turno AND fecha_reserva = :fecha);""",evento)
+                                        salas_disponibles = cursor.fetchall()
+                                        
+                                        print(f'{"Clave":<5} | {"Nombre de la Sala":<20} | {"Cupo":<8} |')
+                                        print(f'{"-" * 41}')
+                                        for clave_sala, nombre, cupo in salas_disponibles:
+                                            print(f'{clave_sala:<5} | {nombre:<20} | {cupo:<8} |')
+                                        
+                                        while True:
+                                            evento['sala'] = int(input("\nIngrese la CLAVE de la sala a escoger: "))
+                                            cursor.execute(f"""SELECT * FROM SALA WHERE clave_sala = :sala ;""", evento)
+                                            existe_sala = cursor.fetchall()
+                                            if not existe_sala:
+                                                print("\n *** La Sala escogida no es correcta, porfavor escoja una sala existente ***\n")
+                                            else:
+                                                break
+                                        cursor.execute(f"""SELECT T.clave_turno ,T.descripcion
+                                                           FROM TURNO AS T
+                                                           WHERE NOT EXISTS (SELECT * FROM RESERVACION AS R
+                                                           WHERE T.descripcion = R.turno AND R.sala = :sala
+                                                           AND fecha_reserva = :fecha);""",evento)
+                                        turnos = cursor.fetchall()
+                                        
+                                        print(f'\n{" Turnos Disponibles ".center(80, "_")}\n')
+                                        for clave_sala, descripcion in turnos:
+                                            print(f'{clave_sala} - {descripcion}')
+                                        
+                                        
+                                        while True:
+                                            evento['turno'] = input("\nTeclee la letra del turno a elegir: ").upper()
+                                            cursor.execute(f"""SELECT * FROM TURNO WHERE clave_turno = :turno""",evento)
+                                            turno_existente = cursor.fetchall()
+                                            if turno_existente:
+                                                cursor.execute(f"""SELECT turno FROM RESERVACION
+                                                                   WHERE sala = :sala AND fecha_reserva = :fecha
+                                                                   AND turno = (SELECT DESCRIPCION FROM TURNO WHERE clave_turno = :turno);""",evento)
+                                                turno_ocupado = cursor.fetchall()
+                                                
+                                                if turno_ocupado:
+                                                   print("\n *** El Turno escogido ya esta ocupado, porfavor escoja otro ***\n")
+                                                else:
+                                                    cursor.execute("SELECT descripcion FROM TURNO WHERE clave_turno = :turno",evento)
+                                                    for t in cursor.fetchall():
+                                                        evento['turno'] = t[0]
+                                                    break
+                                            else:
+                                                print("\n *** Escoja un turno correcto ***\n")
+                                        
+                                        evento['nombre_evento'] = input("Nombre del Evento: ")
+                                        evento['folio'] = random.randint(10000,20000)
+                                        cursor.execute(f"INSERT INTO RESERVACION VALUES(:folio,:fecha,:nombre_evento,:cliente,:sala,:turno);", evento)
+                                        print("\nLa reservación se realizó con exito!\n")
+                                        print(f"--- Folio de Reservación: {evento['folio']}")
+                                        input("\nEnter para continuar\n")
+                                        break 
+                                else:
+                                    print("\nERROR. La reservación de una sala se debe realizar al menos con 2 días de anticipación\n")  
+                            else:
+                                print("\n***** La clave asociada con el cliente NO se encuentra ***** | Por favor ingrese otra clave\n")
+                except Error as e:
+                    print(e)
+                except ValueError:
+                            print("*** El dato ingresado no esta en el formato correcto ***")
+                except Exception:
+                    print(f"Ha ocurrido un problema: {sys.exc_info()[0]}")
+                else:
+                    print("*"*80)
+                    
+
+            if submenu_op == 2:
+                print("- " * 40)
+                print(f'\n{"---- Modificar descripción de una reservacion ----".center(80, " ")}\n')
+                print("0. Regresar\n")
+                while True:
+                    folio_consulta = int(input("Ingrese el folio de la reservacion: "))
+                    if folio_consulta == 0:
+                        break
+                    else:
+                        print("-" * 80)
+                        try:
+                            with sqlite3.connect("BD_RESERVACIONES.db") as conn:
+                                cursor = conn.cursor()
+                                cursor.execute(f"SELECT nombre_evento FROM RESERVACION WHERE folio = {folio_consulta}")
+                                folio_encontrado = cursor.fetchall()
+                                if folio_encontrado:
+                                    for nombre_evento in folio_encontrado:
+                                        print(f'\nNombre del Evento: {nombre_evento[0]}\n')
+                                    nuevo_nombre = input("Ingrese la Nueva descripcion del evento: ")
+                                    update = {'nombre_evento': nuevo_nombre, 'folio' : folio_consulta}
+                                    cursor.execute(f"UPDATE RESERVACION SET nombre_evento = :nombre_evento WHERE folio = :folio", update)
+                                    print("\nCambios Efectuados con Exito!\n")
+                                else:
+                                    print("**** No existe ninguna reservacion con ese Folio ****") 
+                        except Error as e:
+                            print(e)
+                        except Exception:
+                            print(f"Ha ocurrido un problema: {sys.exc_info()[0]}")
+                        else:
+                            
+                            input("\nEnter para continuar\n")
+                            break
+
+            if submenu_op == 3:
+                print("- " * 40)
+                print(f'\n{"---- Consultar Disponibilidad Salas por fecha ----".center(80, " ")}\n')
+                print("0. Regresar\n")
+                while True:
+                    fecha_str = input("\nIngrese la fecha (DD/MM/YYYY): ")
+                    if fecha_str == '0':
+                        break
+                    else:
+                        try:
+                            with sqlite3.connect("BD_RESERVACIONES.db") as conn:
+                                cursor = conn.cursor()
+                                consultar_fecha = datetime.datetime.strptime(fecha_str, "%d/%m/%Y").date()
+                                consultar_fecha = consultar_fecha.strftime('%Y-%m-%d')
+                                cursor.execute(f"""SELECT S.clave_sala, S.nombre, T.DESCRIPCION
+                                                FROM SALA as S, TURNO AS T
+                                                WHERE NOT EXISTS (SELECT * FROM RESERVACION AS R WHERE S.clave_sala = R.sala 
+                                                AND T.DESCRIPCION = R.TURNO and fecha_reserva = ?);""",(consultar_fecha,))
+                                salas_disponibles = cursor.fetchall()
+                        except Error as e:
+                            print(e)
+                        except ValueError:
+                            print("*** El dato ingresado no esta en el formato correcto ***")
+                        except Exception:
+                            print(f"Ha ocurrido un problema: {sys.exc_info()[0]}")
+                        else:
+                            print("- " * 40)
+                            if salas_disponibles:
+                                print(f"\nSalas Disponibles para renta el {consultar_fecha}\n")
+                                print(f'{"Clave".center(5," "):<5} | {"SALA".center(20," "):<20} | {"TURNO".center(10," "):<10} |')
+                                print("-" * 43)
+                                for clave_sala, nombre, cupo in salas_disponibles:
+                                    print(f'{clave_sala:<5} | {nombre:<20} | {cupo:<10} |')
+                                fecha_str = input("\n¿Consultar otra fecha? [S/N]: ").upper()
+                                if fecha_str == 'N': break
+                            else:
+                                print("**** No existen salas registradas, favor de registrarlas primero ****")
+                                break
+                                
+            if submenu_op == 4:
+                print("- " * 40)
+                print(f'\n{"---- Eliminar una reservación ----".center(80, " ")}\n')
+                print("0. Regresar\n")
+                while True:
+                    folio_consulta = int(input("Ingrese el folio de la reservacion: "))
+                    if folio_consulta == 0:
+                        break
+                    else:
+                        print("-" * 80)
+                        try:
+                            with sqlite3.connect("BD_RESERVACIONES.db") as conn:
+                                cursor = conn.cursor()
+                                cursor.execute(f"""SELECT R.folio, R.fecha_reserva, R.nombre_evento, R.cliente, C.nombre_cliente, R.sala , S.nombre, R.turno
+                                                   FROM RESERVACION AS R
+                                                   INNER JOIN CLIENTE AS C ON R.cliente = C.clave_cliente
+                                                   INNER JOIN SALA AS S ON R.sala = S.clave_sala WHERE folio = {folio_consulta};""")
+                                reserva = cursor.fetchall()
+
+                                if reserva:
+                                    for folio, fecha_reserva, nombre_evento, cliente, nombre_cliente, sala, nombre_sala, turno in reserva:
+                                        fecha_reserva = datetime.datetime.strptime(fecha_reserva, "%Y-%m-%d").date()
+                                        fecha_limite_reserva = fecha_reserva - datetime.timedelta(days=+3)
+                                        if datetime.date.today() <= fecha_limite_reserva:
+                                            print(f'\nFolio: {folio}')
+                                            print(f'Fecha de Reservación: {fecha_reserva}\n')
+                                            print(f'Nombre del Evento: {nombre_evento}\n')
+                                            print(f'Nombre del Cliente: {nombre_cliente:<8} | Clave: {cliente}\n')
+                                            print(f'{"Clave".center(5," "):<5} | {"SALA".center(20," "):<20} | {"TURNO".center(10," "):<10} |')
+                                            print("-" * 43)
+                                            print(f'{sala:<5} | {nombre_sala:<20} | {turno:<10} |')
+                                            print('\n***** WARNING *****\n¡Esta accion no se puede deshacer!')
+                                            delete = input("¿Seguro que deseas eliminar esta reservación? [S/N]: ").upper()
+                                            if delete == 'S':
+                                                cursor.execute(f"DELETE FROM RESERVACION WHERE folio = {folio};")
+                                                print("\nLa reservacion fue Eliminada con exito!\n")
+                                        else:
+                                            print("Esta reservación ya NO puede ser elimanada, solo se pueden eliminar con 3 dias de anticipación ")
+                                else:
+                                    print("**** No existe ninguna reservacion con ese Folio ****") 
+                        except Error as e:
+                            print(e)
+                        except Exception:
+                            print(f"Ha ocurrido un problema: {sys.exc_info()[0]}")
+                        else:
+                            break
+            if submenu_op == 0:
+                break
+                
+    elif menu_op == 2:
+        while True:
+            print(f'\n{" Reportes ".center(80, "-")}\n')
+            print("1. Reporte de reservaciones para una fecha.")
+            print("2. Exportar reporte tabular (Excel).")
+            print("\n0. Volver al Menú Principal\n")
+            print(" -" * 40)
+            submenu_op = int(input("Ingresa el número con la opción: \n"))
+            
+            
+            if submenu_op == 1:
+                print("- " * 40)
+                print(f'\n{" Reporte de Reservaciones para una fecha ".center(80, "-")}\n')
+                print("0. Regresar\n")
+                try:
+                    while True:
+                        fecha_str = input("Ingrese la fecha: ")
+                        if fecha_str == '0':
+                            break
+                        else:
+                            consultar_fecha = datetime.datetime.strptime(fecha_str, "%d/%m/%Y").date()
+                            with sqlite3.connect("BD_RESERVACIONES.db") as conn:
+                                cursor = conn.cursor()
+                                cursor.execute(f"""SELECT R.folio, R.sala, C.nombre_cliente, R.nombre_evento, R.turno
+                                                   FROM RESERVACION AS R
+                                                   INNER JOIN CLIENTE AS C ON R.cliente = C.clave_cliente
+                                                   WHERE R.fecha_reserva = ?;""",(consultar_fecha,))
+                                reservaciones = cursor.fetchall()
+                                if reservaciones:
+                                    print(f"\n                 --- Reporte de Reservaciones para el día {consultar_fecha} ---       \n")
+                                    print(f'{"Folio".center(5," ")} | {"Sala".center(10," ")} | {"Cliente".center(20," ")} | {"Evento".center(30," ")} | {"Turno".center(10," ")} |')
+                                    print("-" * 90)
+                                    for folio, sala, nombre_cliente, nombre_evento, turno in reservaciones:
+                                        print(f'{folio} | {sala:<10} | {nombre_cliente:<20} | {nombre_evento:<30} | {turno:<10} |')
+                                    input("\nEnter para continuar\n")
+                                    break
+                                else:
+                                    print("\n***** No existen reservaciones con la fecha ingresada *****\n")
+                except Error as e:
+                    print(e)
+                except ValueError:
+                            print("*** El dato ingresado no esta en el formato correcto ***")
+                except Exception:
+                    print(f"Ha ocurrido un problema: {sys.exc_info()[0]}")
+    
+            if submenu_op == 2:
+                folios = []
+                fechas = []
+                salas = []
+                clientes = []
+                eventos = []
+                turnos = []
+                try:
+                    with sqlite3.connect("BD_RESERVACIONES.db") as conn:
+                        cursor = conn.cursor()
+                        cursor.execute(f"""SELECT R.folio, R.fecha_reserva, S.nombre, C.nombre_cliente, R.nombre_evento, R.turno
+                                           FROM RESERVACION AS R
+                                           INNER JOIN CLIENTE AS C ON R.cliente = C.clave_cliente
+                                           INNER JOIN SALA AS S ON R.sala = S.clave_sala;""")
+                        reserva = cursor.fetchall()
+                except Error as e:
+                    print(e)
+                except Exception:
+                    print(f"Ha ocurrido un problema: {sys.exc_info()[0]}")
+                else:
+                    for folio, fecha_reserva, nombre_sala, nombre_cliente, nombre_evento, turno in reserva:
+                        folios.append(folio)
+                        fechas.append(fecha_reserva)
+                        salas.append(nombre_sala)
+                        clientes.append(nombre_cliente)
+                        eventos.append(nombre_evento)
+                        turnos.append(turno)
+                    e = {"FOLIO":folios,"FECHA":fechas ,"SALA":salas, "CLIENTE":clientes, "EVENTO":eventos, "TURNO":turnos}
+                    try:
+                        df = pd.DataFrame(e)
+                        df.to_excel('Reporte_Reservaciones.xlsx',index=False)
+                    except Error as e:
+                        print(e)
+                    except Exception:
+                        print(" *** ERROR *** Ocurrio un problema para exportar el archivo")
+                        input("\nEnter para continuar\n")
+                    else:
+                        print(f"\nSe ha generado un archivo XLSX en la ruta actual")
+                        input("\nEnter para continuar\n")
+            if submenu_op == 0:
+                break
+            
+    elif menu_op == 3:
+        print(f'\n{" Registrar una Sala ".center(80, "-")}\n')
+        while True:
+            clave_sala = {'nombre_sala': input("Ingrese el nombre de la Sala: ")}
+            if clave_sala['nombre_sala'].strip() == '' and len(clave_sala['nombre_sala'].strip()) == 0:
+                print("Este campo no puede omitirse\n")
+            else:
+                break
+        while True:
+            clave_sala['cupo'] = input("Ingrese el cupo total para la Sala: ")
+            if len(clave_sala['cupo']) == 0 or clave_sala['cupo'].strip() == '':
+                print("El cupo no puede estar vacio\n")
+            elif int(clave_sala['cupo']) <= 0:
+                print("El numero debe ser mayor a 0\n")
+            else:
+                break
+        try:
+            with sqlite3.connect("BD_RESERVACIONES.db") as conn:
+                cursor = conn.cursor()
+                while True:
+                    clave_sala['id'] = random.randint(100,200)
+                    cursor.execute(f"SELECT clave_sala FROM SALA WHERE clave_sala = :id;",clave_sala)
+                    sala_ocupada = cursor.fetchall()
+                    if not sala_ocupada:
+                        cursor.execute(f"INSERT INTO SALA VALUES(:id,:nombre_sala,:cupo);",clave_sala)
+                        break
+        except Error as e:
+            print(e)
+        except Exception:
+            print(f"Ha ocurrido un problema: {sys.exc_info()[0]}")
+        else:
+            print("-" * 80)
+            print("\nSala registrada con exito!\n")
+            print(f"--- Clave de la Sala: {clave_sala['id']}")
+            input("\nEnter para continuar\n")
+    
+    
+    elif menu_op == 4:
+        print(f'\n{" Registrar un Cliente ".center(80, "-")}\n')
+        while True:
+            clave_cliente = {'nombre_cliente' : input("Ingrese el nombre del Cliente: ")}
+            if clave_cliente['nombre_cliente'].strip() == '' and len(clave_cliente['nombre_cliente'].strip()) == 0 :
+                print("Este campo no puede omitirse\n")
+            else:
+                break
+        try:
+            with sqlite3.connect("BD_RESERVACIONES.db") as conn:
+                cursor = conn.cursor()
+                while True:
+                    clave_cliente['id'] = random.randint(100,200)
+                    cursor.execute(f"SELECT clave_cliente FROM CLIENTE WHERE clave_cliente = :id;",clave_cliente)
+                    cliente_ocupado = cursor.fetchall()
+                    if not cliente_ocupado:
+                        cursor.execute(f"INSERT INTO CLIENTE VALUES(:id,:nombre_cliente);",clave_cliente)
+                        break
+        except Error as e:
+            print(e)
+        except Exception:
+            print(f"Ha ocurrido un problema: {sys.exc_info()[0]}")
+        else:
+            print("-" * 80)
+            print("\nCliente registrado con exito!\n")
+            print(f"--- Clave del Cliente: {clave_cliente['id']}")
+            input("\nEnter para continuar\n")
+            
+    elif menu_op == 0:
+        break
